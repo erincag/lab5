@@ -1,28 +1,135 @@
 ---
-title: ""
-author: ""
-format:
-  html:
-    embed-resources: true
+title: "Lab 5"
+author: "Erin Cagle"
+format: html
+editor: visual
+embed-resources: true
 ---
 
-## Quarto
+# Learning goals
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+-   Use the `merge()` function to join two datasets.
+-   Deal with missings and impute data.
+-   Identify relevant observations using `quantile()`.
+-   Practice your GitHub skills.
 
-## Running Code
+# Lab description
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+For this lab we will be, again, dealing with the meteorological dataset downloaded from the NOAA, the `met`. In this case, we will use `data.table` to answer some questions regarding the `met` dataset, while at the same time practice your Git+GitHub skills for this project.
+
+This markdown document should be rendered using `github_document` document.
+
+# Part 1: Setup the Git project and the GitHub repository
+
+1.  Go to your documents (or wherever you are planning to store the data) in your computer, and create a folder for this project, for example, "PM566-labs"
+
+2.  In that folder, save [this template](https://raw.githubusercontent.com/USCbiostats/PM566/master/website/content/assignment/05-lab.Rmd) as "README.Rmd". This will be the markdown file where all the magic will happen.
+
+3.  Go to your GitHub account and create a new repository, hopefully of the same name that this folder has, i.e., "PM566-labs".
+
+4.  Initialize the Git project, add the "README.Rmd" file, and make your first commit.
+
+5.  Add the repo you just created on GitHub.com to the list of remotes, and push your commit to origin while setting the upstream.
+
+Once you are done setting up the project, you can now start working with the MET data.
+
+## Setup in R
+
+1.  Load the `data.table` (and the `dtplyr` and `dplyr` packages if you plan to work with those).
+
+    ```{r}
+    library(data.table)
+    library(dtplyr)
+    library(dplyr)
+    library(ggplot2)
+    library(tibble)
+    library(tidyr)
+    library(purrr)
+    library(forcats)
+    ```
+2.  Load the met data from https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz, and also the station data. For the later, you can use the code we used during lecture to pre-process the stations data:
+
+    ```{r}
+    if (!file.exists("met_all.gz"))
+      download.file(
+        url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+        destfile = "met_all.gz",
+        method   = "libcurl",
+        timeout  = 60
+        )
+    met <- data.table::fread("met_all.gz")
+    ```
+```{r stations-data, eval = FALSE}
+# Download the data
+stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
+stations[, USAF := as.integer(USAF)]
+
+# Dealing with NAs and 999999
+stations[, USAF   := fifelse(USAF == 999999, NA_integer_, USAF)]
+stations[, CTRY   := fifelse(CTRY == "", NA_character_, CTRY)]
+stations[, STATE  := fifelse(STATE == "", NA_character_, STATE)]
+
+# Selecting the three relevant columns, and keeping unique records
+stations <- unique(stations[, list(USAF, CTRY, STATE)])
+
+# Dropping NAs
+stations <- stations[!is.na(USAF)]
+
+# Removing duplicates
+stations[, n := 1:.N, by = .(USAF)]
+stations <- stations[n == 1,][, n := NULL]
+
+#3. Merge the data as we did during the lecture.
+stat <- merge(
+  # Data
+  x     = met,      
+  y     = stations, 
+  # List of variables to match
+  by.x  = "USAFID",
+  by.y  = "USAF", 
+  # Which obs to keep?
+  all.x = TRUE,      
+  all.y = FALSE
+  )
+head(stat[, list(USAFID, WBAN, STATE)], n = 4)
+```
+## Question 1: Representative station for the US
+
+What is the median station in terms of temperature, wind speed, and atmospheric pressure? Look for the three weather stations that best represent continental US using the `quantile()` function. Do these three coincide?
 
 ```{r}
-1 + 1
-```
+stat_med <- stat[, .(
+    temp_quan      = quantile(temp, na.rm=TRUE),
+    wind.sp_quan   = quantile(wind.sp, na.rm=TRUE),
+    atm.press_quan = quantile(atm.press, na.rm = TRUE)
+    ), by = USAFID
+    ][order(USAFID)]
+    
 
-You can add options to executable code like this
+# in_names  <- c("wind.sp", "temp", "atm.press")
+# out_names <- paste0(in_names, "_med")
+# stat_med <- stat[,
+#   setNames(lapply(.SD, quantile, na.rm = TRUE), out_names),
+#   .SDcols = in_names
+#   ]
+
+usmed <- stat_med[, .(
+    temp_quan      = quantile(temp_quan, na.rm=TRUE),
+    wind.sp_quan   = quantile(wind.sp_quan, na.rm=TRUE),
+    atm.press_quan = quantile(atm.press_quan, na.rm = TRUE))]
+medstate <- stat[(temp == 23.900 & wind.sp == 2.6 & atm.press == 1014.200)]
+medstate[order(medstate$STATE)]
+```
+Median temp is 23.9, median wind speed is 2.6, and median atm pressure is 1014.2. States that align with the median values are most often states in the southeast region.
 
 ```{r}
-#| echo: false
-2 * 2
+stat_med_state <- stat[, .(
+    temp_quan      = quantile(temp, na.rm=TRUE),
+    wind.sp_quan   = quantile(wind.sp, na.rm=TRUE),
+    atm.press_quan = quantile(atm.press, na.rm = TRUE)
+    ),
+    by = STATE
+    ][order(STATE)]
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+**When sorted by state, most states' median is for temp is in the 20s, wind speed is in the 1.5-2.5 range, atm pressure is around 1015.**
